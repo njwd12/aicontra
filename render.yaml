@@ -8,7 +8,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: DATABASE_URL
-        value: ./inventory.db
+        value: ./data/inventory.db
       - key: NODE_ENV
         value: production
     disk:

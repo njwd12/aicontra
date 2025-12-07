@@ -1,24 +1,37 @@
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
 
+// Патека до базата
+const dbPath = process.env.DATABASE_URL || './inventory.db';
+
+// Провери дали постои data папката на Render
+const dataDir = path.dirname(dbPath);
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log(`Created directory: ${dataDir}`);
+}
+
 // Иницијализација на база
-const db = new sqlite3.Database('./inventory.db', (err) => {
+const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Database connection error:', err);
   } else {
-    console.log('Connected to SQLite database');
+    console.log(`Connected to SQLite database at: ${dbPath}`);
     initDatabase();
   }
 });
 
 function initDatabase() {
+  // Креирај табела ако не постои
   db.run(`
     CREATE TABLE IF NOT EXISTS items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,8 +40,51 @@ function initDatabase() {
       lastUpdated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `, (err) => {
-    if (err) console.error('Table creation error:', err);
-    else console.log('Items table ready');
+    if (err) {
+      console.error('Table creation error:', err);
+    } else {
+      console.log('Items table ready');
+      
+      // Провери дали има податоци, ако не, внеси примерни
+      db.get('SELECT COUNT(*) as count FROM items', [], (err, row) => {
+        if (err) {
+          console.error('Error counting items:', err);
+        } else if (row.count === 0) {
+          console.log('Database empty, inserting sample data...');
+          insertSampleData();
+        } else {
+          console.log(`Database has ${row.count} items`);
+        }
+      });
+    }
+  });
+}
+
+function insertSampleData() {
+  const sampleItems = [
+    ['Apples', 50],
+    ['Bottled Water', 120],
+    ['Chips', 75],
+    ['Chocolate Bars', 40],
+    ['Coffee Packets', 30]
+  ];
+  
+  const stmt = db.prepare('INSERT INTO items (name, qty) VALUES (?, ?)');
+  
+  sampleItems.forEach(([name, qty], index) => {
+    stmt.run(name, qty, (err) => {
+      if (err) {
+        console.error(`Error inserting ${name}:`, err);
+      } else {
+        console.log(`✓ Inserted: ${name} (${qty})`);
+      }
+      
+      // После последниот, затвори го statement
+      if (index === sampleItems.length - 1) {
+        stmt.finalize();
+        console.log('✅ Sample data inserted successfully');
+      }
+    });
   });
 }
 
@@ -55,10 +111,11 @@ if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 30) {
 app.get('/api/products', (req, res) => {
   db.all('SELECT * FROM items ORDER BY lastUpdated DESC', [], (err, rows) => {
     if (err) {
+      console.error('Database error:', err);
       res.status(500).json({ error: err.message });
       return;
     }
-    res.json(rows);
+    res.json(rows || []);
   });
 });
 
@@ -214,19 +271,45 @@ app.post('/api/ai', async (req, res) => {
 
 // GET /api/health - Health check за Render
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    service: 'AI Inventory Manager API',
-    aiEnabled: openai !== null
+  // Провери дали базата работи
+  db.get('SELECT 1 as ok', [], (err) => {
+    const dbStatus = err ? 'error' : 'ok';
+    
+    res.json({ 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      service: 'AI Inventory Manager API',
+      database: dbStatus,
+      aiEnabled: openai !== null,
+      endpoints: {
+        products: '/api/products',
+        ai: '/api/ai',
+        health: '/api/health'
+      }
+    });
+  });
+});
+
+// GET / - Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'AI Inventory Manager API',
+    version: '1.0.0',
+    endpoints: {
+      products: '/api/products',
+      ai: '/api/ai', 
+      health: '/api/health'
+    },
+    documentation: 'See README for API usage'
   });
 });
 
 // Стартување на серверот
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 API available at http://localhost:${PORT}/api/products`);
-  console.log(`🤖 AI endpoint at http://localhost:${PORT}/api/ai`);
-  console.log(`❤️ Health check at http://localhost:${PORT}/api/health`);
+  console.log(`🌐 Available at: https://aicontra.onrender.com`);
+  console.log(`📊 API: https://aicontra.onrender.com/api/products`);
+  console.log(`🤖 AI: https://aicontra.onrender.com/api/ai`);
+  console.log(`❤️ Health: https://aicontra.onrender.com/api/health`);
   console.log(`🔧 OpenAI: ${openai ? 'ENABLED' : 'DISABLED (no API key)'}`);
 });
