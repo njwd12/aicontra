@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
-const { OpenAI } = require('openai');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -11,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // Иницијализација на база
-const db = new sqlite3.Database(process.env.DATABASE_URL || './inventory.db', (err) => {
+const db = new sqlite3.Database('./inventory.db', (err) => {
   if (err) {
     console.error('Database connection error:', err);
   } else {
@@ -34,10 +32,22 @@ function initDatabase() {
   });
 }
 
-// Иницијализација на OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenAI клиент - креирај го само ако има клуч
+let openai = null;
+if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 30) {
+  try {
+    const { OpenAI } = require('openai');
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    console.log('✅ OpenAI client initialized');
+  } catch (error) {
+    console.warn('❌ Failed to initialize OpenAI:', error.message);
+  }
+} else {
+  console.log('⚠️ OpenAI API key not configured');
+  console.log('   AI features will be disabled');
+}
 
 // API Endpoints
 
@@ -161,8 +171,12 @@ app.post('/api/ai', async (req, res) => {
       return;
     }
     
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: 'OpenAI API key is not configured' });
+    if (!openai) {
+      res.status(503).json({ 
+        error: 'AI service unavailable',
+        message: 'OpenAI API key is not configured',
+        fix: 'Add OPENAI_API_KEY environment variable in Render dashboard'
+      });
       return;
     }
     
@@ -203,7 +217,8 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    service: 'AI Inventory Manager API'
+    service: 'AI Inventory Manager API',
+    aiEnabled: openai !== null
   });
 });
 
@@ -212,4 +227,6 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 API available at http://localhost:${PORT}/api/products`);
   console.log(`🤖 AI endpoint at http://localhost:${PORT}/api/ai`);
+  console.log(`❤️ Health check at http://localhost:${PORT}/api/health`);
+  console.log(`🔧 OpenAI: ${openai ? 'ENABLED' : 'DISABLED (no API key)'}`);
 });
